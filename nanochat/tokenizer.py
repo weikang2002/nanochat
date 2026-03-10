@@ -404,3 +404,140 @@ def get_token_bytes(device="cpu"):
     with open(token_bytes_path, "rb") as f:
         token_bytes = torch.load(f, map_location=device)
     return token_bytes
+
+
+"""
+Customzed added
+"""
+if __name__ == "__main__":
+    """
+    Test tokenizer functionality.
+    Usage: python -m nanochat.tokenizer
+    """
+    print("Testing Tokenizer...")
+    print("=" * 60)
+    
+    # Test with the project's trained tokenizer
+    print("\n1. Loading tokenizer from disk...")
+    try:
+        tokenizer = get_tokenizer()
+        print(f"   Loaded tokenizer: {type(tokenizer).__name__}")
+        print(f"   Vocab size: {tokenizer.get_vocab_size():,}")
+    except Exception as e:
+        print(f"   Failed to load tokenizer: {e}")
+        print("   Falling back to GPT-2 tokenizer from HuggingFace...")
+        tokenizer = RustBPETokenizer.from_pretrained("gpt2")
+        print(f"   Vocab size: {tokenizer.get_vocab_size():,}")
+    
+    # Test special tokens
+    print("\n2. Special tokens:")
+    special_tokens = tokenizer.get_special_tokens()
+    print(f"   Found {len(special_tokens)} special tokens")
+    for token in sorted(special_tokens):
+        if hasattr(tokenizer, 'encode_special'):
+            token_id = tokenizer.encode_special(token)
+            print(f"   {token:20s} -> {token_id}")
+    
+    # Test BOS token
+    print("\n3. BOS token:")
+    bos_id = tokenizer.get_bos_token_id()
+    print(f"   ID: {bos_id}")
+    print(f"   Decoded: {repr(tokenizer.decode([bos_id]))}")
+    
+    # Test encoding/decoding
+    print("\n4. Basic encoding/decoding:")
+    test_texts = [
+        "Hello, world!",
+        "The quick brown fox jumps over the lazy dog.",
+        "Python is awesome! 🐍",
+        "Numbers: 123 456 789",
+    ]
+    for text in test_texts:
+        ids = tokenizer.encode(text)
+        decoded = tokenizer.decode(ids)
+        match = "✓" if decoded == text else "✗"
+        print(f"   {match} '{text[:40]}'")
+        print(f"      -> {len(ids)} tokens: {ids[:10]}{'...' if len(ids) > 10 else ''}")
+        if decoded != text:
+            print(f"      Decoded: '{decoded}'")
+    
+    # Test prepend/append
+    print("\n5. Testing prepend/append:")
+    text = "Test message"
+    ids_plain = tokenizer.encode(text)
+    ids_with_bos = tokenizer.encode(text, prepend=bos_id)
+    print(f"   Plain: {ids_plain}")
+    print(f"   With BOS prepended: {ids_with_bos}")
+    print(f"   BOS added: {ids_with_bos[0] == bos_id}")
+    
+    # Test batch encoding
+    print("\n6. Batch encoding:")
+    batch_texts = ["First text", "Second text", "Third text"]
+    batch_ids = tokenizer.encode(batch_texts, prepend=bos_id, num_threads=4)
+    print(f"   Encoded {len(batch_ids)} texts")
+    for i, ids in enumerate(batch_ids):
+        print(f"   Text {i+1}: {len(ids)} tokens, starts with BOS: {ids[0] == bos_id}")
+    
+    # Test conversation rendering (if RustBPETokenizer)
+    if isinstance(tokenizer, RustBPETokenizer):
+        print("\n7. Testing conversation rendering:")
+        conversation = {
+            "messages": [
+                {"role": "user", "content": "What is 2+2?"},
+                {"role": "assistant", "content": "The answer is 4."}
+            ]
+        }
+        ids, mask = tokenizer.render_conversation(conversation)
+        print(f"   Total tokens: {len(ids)}")
+        print(f"   Supervised tokens: {sum(mask)} ({sum(mask)/len(mask)*100:.1f}%)")
+        print(f"   Token IDs: {ids[:20]}{'...' if len(ids) > 20 else ''}")
+        print(f"   Mask: {mask[:20]}{'...' if len(mask) > 20 else ''}")
+        
+        # Visualize tokenization
+        print("\n8. Visualization (green=supervised, red=not supervised):")
+        viz = tokenizer.visualize_tokenization(ids, mask, with_token_id=False)
+        print(f"   {viz}")
+        
+        # Test with tool use
+        print("\n9. Testing conversation with tool use:")
+        conversation_tool = {
+            "messages": [
+                {"role": "user", "content": "Calculate 15 * 23"},
+                {"role": "assistant", "content": [
+                    {"type": "text", "text": "Let me calculate that: "},
+                    {"type": "python", "text": "15*23"},
+                    {"type": "python_output", "text": "345"},
+                    {"type": "text", "text": ". The answer is 345."}
+                ]}
+            ]
+        }
+        ids_tool, mask_tool = tokenizer.render_conversation(conversation_tool)
+        print(f"   Total tokens: {len(ids_tool)}")
+        print(f"   Supervised tokens: {sum(mask_tool)} ({sum(mask_tool)/len(mask_tool)*100:.1f}%)")
+        
+        # Test completion rendering
+        print("\n10. Testing completion rendering (for RL):")
+        conversation_rl = {
+            "messages": [
+                {"role": "user", "content": "Write a haiku about coding."},
+                {"role": "assistant", "content": "Code flows like water..."}
+            ]
+        }
+        ids_completion = tokenizer.render_for_completion(conversation_rl)
+        print(f"   Prompt tokens: {len(ids_completion)}")
+        last_token = tokenizer.decode([ids_completion[-1]])
+        print(f"   Last token: {repr(last_token)} (should be assistant_start)")
+    
+    # Test individual token lookup
+    print("\n11. Token lookup:")
+    test_ids = [0, 1, 2, bos_id, tokenizer.get_vocab_size() - 1]
+    for token_id in test_ids:
+        try:
+            token_str = tokenizer.id_to_token(token_id)
+            print(f"   ID {token_id:5d} -> {repr(token_str[:30])}")
+        except Exception as e:
+            print(f"   ID {token_id:5d} -> Error: {e}")
+    
+    print("\n" + "=" * 60)
+    print("All tests completed!")
+

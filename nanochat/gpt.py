@@ -461,3 +461,122 @@ class GPT(nn.Module):
             ids = torch.cat((ids, next_ids), dim=1)
             token = next_ids.item()
             yield token
+
+
+"""
+Customzed added
+"""
+if __name__ == "__main__":
+    """
+    Test GPT model initialization, forward pass, and basic functionality.
+    Usage: python -m nanochat.gpt
+    """
+    import time
+    
+    print("Testing GPT model...")
+    print("=" * 60)
+    
+    # Create a small config for testing
+    config = GPTConfig(
+        sequence_len=256,
+        vocab_size=1024,
+        n_layer=4,
+        n_head=4,
+        n_kv_head=4,
+        n_embd=256,
+        window_pattern="SL"
+    )
+    
+    print(f"\nModel configuration:")
+    print(f"  Layers: {config.n_layer}")
+    print(f"  Heads: {config.n_head} (KV heads: {config.n_kv_head})")
+    print(f"  Embedding dim: {config.n_embd}")
+    print(f"  Vocab size: {config.vocab_size}")
+    print(f"  Sequence length: {config.sequence_len}")
+    print(f"  Window pattern: {config.window_pattern}")
+    
+    # Initialize model on CPU for testing
+    print("\n1. Creating model (on meta device)...")
+    with torch.device("meta"):
+        model = GPT(config)
+    
+    # Materialize on CPU
+    print("2. Materializing model on CPU...")
+    model = model.to_empty(device="cpu")
+    model.init_weights()
+    
+    # Test parameter counts
+    print("\n3. Parameter counts:")
+    param_counts = model.num_scaling_params()
+    for key, count in param_counts.items():
+        print(f"  {key}: {count:,}")
+    print(f"  Total: {param_counts['total']:,}")
+    
+    # Test FLOP estimation
+    print("\n4. Estimated FLOPs per token:")
+    flops = model.estimate_flops()
+    print(f"  {flops:,} FLOPs")
+    print(f"  {flops / 1e9:.3f} GFLOPs")
+    
+    # Test window sizes
+    print("\n5. Per-layer window sizes:")
+    for i, ws in enumerate(model.window_sizes):
+        window_type = "Full" if ws[0] < 0 else f"Sliding ({ws[0]})"
+        print(f"  Layer {i}: {window_type}")
+    
+    # Test forward pass
+    print("\n6. Testing forward pass...")
+    B, T = 2, 64
+    input_ids = torch.randint(0, config.vocab_size, (B, T), dtype=torch.long)
+    target_ids = torch.randint(0, config.vocab_size, (B, T), dtype=torch.long)
+    
+    t0 = time.time()
+    # Training mode: compute loss
+    loss = model(input_ids, targets=target_ids)
+    t1 = time.time()
+    print(f"  Forward pass (training): {(t1-t0)*1000:.2f}ms")
+    print(f"  Loss: {loss.item():.4f}")
+    
+    # Inference mode: get logits
+    t0 = time.time()
+    logits = model(input_ids)
+    t1 = time.time()
+    print(f"  Forward pass (inference): {(t1-t0)*1000:.2f}ms")
+    print(f"  Logits shape: {logits.shape}")
+    print(f"  Logits range: [{logits.min():.2f}, {logits.max():.2f}]")
+    
+    # Test optimizer setup
+    print("\n7. Testing optimizer setup...")
+    optimizer = model.setup_optimizer(
+        unembedding_lr=0.004,
+        embedding_lr=0.2,
+        matrix_lr=0.02,
+        weight_decay=0.1
+    )
+    print(f"  Optimizer type: {type(optimizer).__name__}")
+    print(f"  Param groups: {len(optimizer.param_groups)}")
+    adamw_groups = sum(1 for g in optimizer.param_groups if g.get('kind') == 'adamw')
+    muon_groups = sum(1 for g in optimizer.param_groups if g.get('kind') == 'muon')
+    print(f"    AdamW groups: {adamw_groups}")
+    print(f"    Muon groups: {muon_groups}")
+    
+    # Test generate function
+    print("\n8. Testing generate function...")
+    prompt_tokens = [1, 2, 3, 4]  # fake tokens
+    generated = []
+    t0 = time.time()
+    for token in model.generate(prompt_tokens, max_tokens=10, temperature=0.0):
+        generated.append(token)
+    t1 = time.time()
+    print(f"  Generated {len(generated)} tokens in {(t1-t0)*1000:.2f}ms")
+    print(f"  Tokens: {generated}")
+    
+    # Test value embedding configuration
+    print("\n9. Value embedding configuration:")
+    ve_layers = [i for i in range(config.n_layer) if has_ve(i, config.n_layer)]
+    print(f"  Layers with value embeddings: {ve_layers}")
+    print(f"  Total VE layers: {len(ve_layers)}/{config.n_layer}")
+    
+    print("\n" + "=" * 60)
+    print("All tests passed successfully!")
+

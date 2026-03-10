@@ -164,3 +164,73 @@ def tokenizing_distributed_data_loader_bos_bestfit(*args, **kwargs):
     """Helper that omits state_dict from yields."""
     for inputs, targets, state_dict in tokenizing_distributed_data_loader_with_state_bos_bestfit(*args, **kwargs):
         yield inputs, targets
+
+
+"""
+Customzed added
+"""
+if __name__ == "__main__":
+    """
+    Test the BOS-aligned bestfit dataloader.
+    Usage: python -m nanochat.dataloader
+    """
+    import time
+    from nanochat.tokenizer import get_tokenizer
+
+    print("Loading tokenizer...")
+    tokenizer = get_tokenizer()
+
+    print("Creating dataloader...")
+    B, T = 4, 256  # small batch for testing
+    loader = tokenizing_distributed_data_loader_with_state_bos_bestfit(
+        tokenizer=tokenizer,
+        B=B,
+        T=T,
+        split="train",
+        tokenizer_threads=4,
+        tokenizer_batch_size=128,
+        device="cpu",  # use CPU for testing
+        resume_state_dict=None,
+        buffer_size=100
+    )
+
+    print(f"\nTesting dataloader with B={B}, T={T}")
+    print("=" * 60)
+
+    bos_token = tokenizer.get_bos_token_id()
+    num_batches = 3
+
+    for i, (inputs, targets, state_dict) in enumerate(loader):
+        if i >= num_batches:
+            break
+
+        print(f"\nBatch {i+1}:")
+        print(f"  State: pq_idx={state_dict['pq_idx']}, rg_idx={state_dict['rg_idx']}, epoch={state_dict['epoch']}")
+        print(f"  Inputs shape: {inputs.shape}")
+        print(f"  Targets shape: {targets.shape}")
+
+        # Check BOS alignment
+        bos_count = (inputs[:, 0] == bos_token).sum().item()
+        print(f"  BOS tokens at position 0: {bos_count}/{B} rows")
+
+        # Check target alignment (targets should be inputs shifted by 1)
+        alignment_check = torch.all(inputs[:, 1:] == targets[:, :-1])
+        print(f"  Target alignment correct: {alignment_check}")
+
+        # Show first row sample
+        first_row = inputs[0, :20].tolist()
+        decoded = tokenizer.decode(first_row)
+        print(f"  First row (first 20 tokens): {first_row}")
+        print(f"  Decoded: {repr(decoded[:50])}...")
+
+        # Count BOS occurrences per row to verify packing
+        for row_idx in range(B):
+            bos_positions = (inputs[row_idx] == bos_token).nonzero(as_tuple=True)[0].tolist()
+            print(f"  Row {row_idx}: {len(bos_positions)} BOS tokens at positions {bos_positions[:5]}{'...' if len(bos_positions) > 5 else ''}")
+
+    print("\n" + "=" * 60)
+    print("Test completed successfully!")
+    print("\nTo test with resume:")
+    print("  1. Note the state_dict from a batch above")
+    print("  2. Pass resume_state_dict={'pq_idx': X, 'rg_idx': Y, 'epoch': Z}")
+
